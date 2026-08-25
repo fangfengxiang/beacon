@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://pear.php.net/dtd/package-2.0" xmlns:tasks="http://pear.php.net/dtd/tasks-1.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" packagerversion="1.9.4" xsi:schemaLocation="http://pear.php.net/dtd/package-2.0 http://pear.php.net/dtd/package-2.0.xsd http://pear.php.net/dtd/tasks-1.0 http://pear.php.net/dtd/tasks-1.0.xsd">
+ <name>beacon</name>
+ <channel>pecl.php.net</channel>
+ <summary>PHP-FPM state beacon and governance scheduling substrate</summary>
+ <description>beacon is a PHP-FPM C extension that solves the tension between FPM's short-lived worker processes and the long-lived state required for service governance. It does three things FPM cannot: perception (self-counting pool-level health), scheduling (spawning a persistent governance worker), and caching (double-buffered shm for zero-I/O node reads).</description>
+ <lead>
+  <name>Frank</name>
+  <user>frank</user>
+  <email>frank@codebuddy.dev</email>
+  <active>yes</active>
+ </lead>
+ <date>2026-08-25</date>
+ <time>00:00:00</time>
+ <version>
+  <release>0.1.0</release>
+  <api>0.1.0</api>
+ </version>
+ <stability>
+  <release>devel</release>
+  <api>devel</api>
+ </stability>
+ <license uri="https://opensource.org/licenses/MIT">MIT License</license>
+ <notes>
+- Initial development release (0.1.0-dev)
+- Phase 1: Infrastructure (shm double-buffer, config, log)
+- Phase 2: Domain service (health calculation, node selection + LB)
+- Phase 3: Lifecycle (governance worker spawn/monitor/restart, C->PHP callback)
+- Phase 4: PHP API (Beacon class, Beacon\Governance class)
+ </notes>
+ <contents>
+  <dir name="/">
+   <file name="config.m4" role="src" />
+   <file name="config.w32" role="src" />
+   <file name="Makefile.frag" role="src" />
+   <file name="php_beacon.h" role="src" />
+   <file name="beacon_shm.h" role="src" />
+   <file name="beacon_log.h" role="src" />
+   <file name="beacon.c" role="src" />
+   <file name="beacon_config.c" role="src" />
+   <file name="beacon_log.c" role="src" />
+   <file name="beacon_shm.c" role="src" />
+   <file name="beacon_service_health.c" role="src" />
+   <file name="beacon_service_select.c" role="src" />
+   <file name="beacon_governance_worker.c" role="src" />
+   <file name="beacon_callback.c" role="src" />
+   <file name="beacon_api.c" role="src" />
+   <file name="beacon_api_governance.c" role="src" />
+   <file name="governance.php" role="src" />
+   <dir name="tests">
+    <file name="beacon.inc" role="test" />
+    <file name="001.phpt" role="test" />
+    <file name="002.phpt" role="test" />
+    <file name="003.phpt" role="test" />
+    <file name="004.phpt" role="test" />
+    <file name="005.phpt" role="test" />
+    <file name="006.phpt" role="test" />
+    <file name="007.phpt" role="test" />
+    <file name="008.phpt" role="test" />
+    <file name="009.phpt" role="test" />
+    <file name="010.phpt" role="test" />
+    <dir name="e2e">
+     <file name="registry-lifecycle.sh" role="test" />
+    </dir>
+   </dir>
+   <file name="CREDITS" role="doc" />
+   <file name="LICENSE" role="doc" />
+   <file name="EXPERIMENTAL" role="doc" />
+   <file name="README.md" role="doc" />
+  </dir>
+ </contents>
+ <dependencies>
+  <required>
+   <php>
+    <min>8.0.0</min>
+   </php>
+   <pearinstaller>
+    <min>1.9.0</min>
+   </pearinstaller>
+  </required>
+ </dependencies>
+ <providesextension>beacon</providesextension>
+ <extsrcrelease />
+ <changelog>
+  <release>
+   <version>
+    <release>0.1.0</release>
+    <api>0.1.0</api>
+   </version>
+   <stability>
+    <release>devel</release>
+    <api>devel</api>
+   </stability>
+   <date>2026-08-25</date>
+   <license uri="https://opensource.org/licenses/MIT">MIT License</license>
+   <notes>
+- Initial development release (0.1.0-dev)
+- Phase 1: Infrastructure (shm double-buffer, config, log)
+- Phase 2: Domain service (health calculation, node selection + LB)
+- Phase 3: Lifecycle (governance worker spawn/monitor/restart, C->PHP callback)
+- Phase 4: PHP API (Beacon class, Beacon\Governance class)
+   </notes>
+  </release>
+ </changelog>
+</package>

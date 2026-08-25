@@ -1,0 +1,54 @@
+# Build Linux source tarball and attach to GitHub release.
+# Modeled after PECL convention for source releases.
+name: release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      release:
+        description: 'Release tag to build and upload assets for (e.g. 0.1.0)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  source-tarball:
+    name: Build source tarball
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.4"
+          coverage: none
+
+      - name: Create PECL package
+        run: |
+          # Build the extension to verify it compiles
+          phpize
+          ./configure --enable-beacon
+          make -j$(nproc)
+
+          # Create source tarball
+          VERSION=${{ github.event.release.tag_name || inputs.release }}
+          mkdir -p beacon-${VERSION}
+          cp -r *.c *.h config.m4 config.w32 Makefile.frag governance.php package.xml \
+                CREDITS LICENSE EXPERIMENTAL README.md \
+                tests/ docs/ \
+                beacon-${VERSION}/ 2>/dev/null || true
+
+          tar czf beacon-${VERSION}.tgz beacon-${VERSION}/
+          sha256sum beacon-${VERSION}.tgz > beacon-${VERSION}.tgz.sha256
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            beacon-*.tgz
+            beacon-*.tgz.sha256

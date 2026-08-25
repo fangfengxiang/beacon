@@ -1,0 +1,17 @@
+// $Id$
+// vim:ft=javascript
+
+// config.w32 for php-beacon-extension
+//
+// NOTE: beacon relies on SysV shared memory (sys/shm.h, sys/ipc.h) and
+// Linux-specific prctl(), which are not available on Windows. This file
+// exists for structural completeness (PECL convention) but the extension
+// cannot be built on Windows. Use Linux or macOS instead.
+
+ARG_ENABLE("beacon", "enable beacon support", "no");
+
+if (PHP_BEACON != "no") {
+    WARNING("beacon extension requires SysV shared memory and Linux prctl, \
+            which are not available on Windows. Building on Windows is not \
+            supported. Please use Linux or macOS.");
+}

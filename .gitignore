@@ -1,0 +1,51 @@
+# Compiled Object files
+*.slo
+*.lo
+*.o
+
+# Compiled Dynamic libraries
+*.so
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+
+# Build artifacts
+autom4te.cache/
+build/
+modules/
+.deps
+*.dep
+config.h
+config.log
+config.status
+configure
+configure.ac
+Makefile
+Makefile.fragments
+Makefile.global
+Makefile.objects
+libtool
+mkinstalldirs
+run-tests.php
+tmp-php.ini
+
+# phpt test runner artifacts (tests/*.out, *.exp, *.diff, *.sh, *.php, *.log)
+tests/*.out
+tests/*.exp
+tests/*.diff
+tests/*.sh
+tests/*.php
+tests/*.log
+
+# IDE / editor
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+.claude/
+.codebuddy/
+openspec/
+superpowers/

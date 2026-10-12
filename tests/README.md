@@ -34,3 +34,13 @@ NO_INTERACTION=1 REPORT_EXIT_STATUS=1 make test TESTS='tests/public_*.phpt'
 004 改为精确结构预期；005 验收校准后的 busy 计数，009 隔离预期日志；010 精确验收治理 worker guard。010 不再宣称验收完整 spawn/restart/shutdown。FPM fork/exec、reload、多写者、并发损坏恢复及 ZTS 不在本轮验收范围。
 
 参考：[PHP PHPT 编写规范](https://wiki.php.net/doc/articles/writing-tests)、[Swoole 原生测试流程](https://github.com/swoole/swoole-src)。
+
+## CI 与真实治理 worker E2E
+
+```sh
+bash tests/e2e/registry-lifecycle.sh
+```
+
+E2E 在 `mktemp -d .../beacon-e2e.XXXXXX` 创建的私有目录中安装扩展与 governance.php，使用临时 INI，让父子 PHP 都加载该目录的扩展；无需 sudo，也不改动系统扩展。支持内置或共享形式的 pcntl/posix。父进程捕获 SIGTERM 并正常退出，触发 MSHUTDOWN 停止子进程、注销注册和清理 IPC。验收注册 JSON、心跳、保活时间递增、注销文件删除与临时安装产物卸载。
+
+本轮 CI 失败定位：PHP 8.0–8.5 的构建和 PHPT 已通过，E2E 因 BSD 风格 `mktemp -t beacon-e2e` 在 GNU mktemp 下报 `too few X's`。修复后的 E2E 已在 macOS PHP 8.5.11 和 Linux PHP 8.2 容器完整通过。这里验收的是 CLI 父进程 fork/exec 生命周期；FPM master/reload 仍需独立验收。

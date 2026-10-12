@@ -15,3 +15,9 @@
 
 - [x] 3.1 完整 PHPT 验收、更新 CI 和 package.xml 测试清单。
 - [x] 3.2 编写 review 发现、学习路线、验收说明并校验 OpenSpec。
+
+## 4. CI follow-up
+
+- [x] 4.1 读取六版本 CI 结果，定位 GNU mktemp 导致 E2E 启动失败。
+- [x] 4.2 修复 E2E 私有安装、共享运行依赖和正常退出，在 Linux 容器及 macOS 验收真实治理进程生命周期。
+- [ ] 4.3 推送修复并确认 GitHub Actions 全部版本完成。

@@ -1,127 +1,130 @@
 #!/usr/bin/env bash
-# registry-lifecycle.sh — 注册中心生命周期 e2e 实测
-#
-# 流程：安装扩展 → 启动（注册）→ 查看注册信息 → 睡眠 → 查看注册（keepalive 更新）
-#       → 停止（deregister 摘除注册）→ 卸载扩展
-#
-# 用法：
-#   tests/e2e/registry-lifecycle.sh                          # 默认 /var/run/beacon（不可写时自动 sudo -n）
-#   BEACON_E2E_REGISTRY_DIR=/tmp/xx tests/e2e/registry-lifecycle.sh  # 免 sudo 自定义路径（file:// 模式）
-#
-# 环境变量：
-#   BEACON_E2E_REGISTRY_DIR  注册中心目录（默认 /var/run/beacon）
-#   PHP_BIN                  PHP CLI 路径（默认 PATH 中 php）
-#   PHP_CONFIG               php-config 路径（默认 PATH 中 php-config）
-#
-# 退出码：0 全部通过，1 任一断言失败
-
+# Build/install into a private staging root, then verify the real fork+exec
+# registration, keepalive, graceful shutdown and staged uninstall lifecycle.
+# Optional: PHP_BIN, PHP_CONFIG, BEACON_E2E_REGISTRY_DIR.
 set -euo pipefail
-
 cd "$(dirname "$0")/../.."
 
 PHP_BIN="${PHP_BIN:-$(command -v php)}"
 PHP_CONFIG="${PHP_CONFIG:-$(command -v php-config)}"
-REGISTRY_DIR="${BEACON_E2E_REGISTRY_DIR:-/var/run/beacon}"
-SERVICE_NAME="e2e-lifecycle"
-REG_FILE="$REGISTRY_DIR/${SERVICE_NAME}.json"
-LOG_FILE="$(mktemp -t beacon-e2e)"
+RUNTIME_EXT_DIR=$("$PHP_CONFIG" --extension-dir)
+WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/beacon-e2e.XXXXXX")
+REGISTRY_DIR="${BEACON_E2E_REGISTRY_DIR:-$WORK_DIR/registry}"
+SERVICE_NAME="e2e-lifecycle-$$"
+REG_FILE="$REGISTRY_DIR/$SERVICE_NAME.json"
+LOG_FILE="$WORK_DIR/governance.log"
 MAIN_PID=""
+INSTALL_DIR="$WORK_DIR/install"
+EXT_DIR="$INSTALL_DIR/lib/php/beacon"
+DATA_DIR="$INSTALL_DIR/share/php/beacon"
 
-log()  { echo "[e2e] $*"; }
+log() { echo "[e2e] $*"; }
 pass() { echo "[e2e] PASS: $*"; }
-fail() { echo "[e2e] FAIL: $*"; echo "[e2e] --- main process log ---"; cat "$LOG_FILE"; exit 1; }
-
+fail() {
+    echo "[e2e] FAIL: $*"
+    if [ -f "$LOG_FILE" ]; then cat "$LOG_FILE"; fi
+    exit 1
+}
 cleanup() {
     if [ -n "$MAIN_PID" ]; then
         kill "$MAIN_PID" 2>/dev/null || true
         wait "$MAIN_PID" 2>/dev/null || true
     fi
-    rm -f "$LOG_FILE"
+    rm -f "$REG_FILE"
+    rm -rf "$WORK_DIR"
 }
 trap cleanup EXIT
 
-# ---- 1. 构建并安装扩展 ----
-log "step 1: build & install extension"
-JOBS=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
-# phpize 重跑时需覆盖只读模板文件（首次 phpize 从 PHP 安装目录 cp 来的文件只读）
-chmod -R u+w build run-tests.php 2>/dev/null || true
-phpize > /dev/null
-./configure --enable-beacon > /dev/null
-make -j"$JOBS" > /dev/null
-make install > /dev/null
-pass "extension installed"
+log "step 1: build and install into private staging directory"
+if [ ! -f Makefile ]; then
+    phpize
+    ./configure --enable-beacon --with-php-config="$PHP_CONFIG"
+fi
+JOBS=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)
+make -j"$JOBS"
+make install INSTALL_ROOT="$INSTALL_DIR" EXTENSION_DIR=/lib/php/beacon BEACON_DATA_DIR=/share/php/beacon
+[ -f "$EXT_DIR/beacon.so" ] || fail "staged extension missing"
+[ -f "$DATA_DIR/governance.php" ] || fail "staged governance script missing"
+pass "extension and governance script installed"
 
-# ---- 2. 准备注册中心目录 ----
-log "step 2: prepare registry dir: $REGISTRY_DIR"
-if ! mkdir -p "$REGISTRY_DIR" 2>/dev/null || [ ! -w "$REGISTRY_DIR" ]; then
-    if command -v sudo > /dev/null && sudo -n true 2>/dev/null; then
-        sudo -n mkdir -p "$REGISTRY_DIR"
-        sudo -n chown "$(id -un)" "$REGISTRY_DIR"
-    else
-        fail "registry dir $REGISTRY_DIR not writable (set BEACON_E2E_REGISTRY_DIR or configure passwordless sudo)"
+# The exec'd governance PHP uses the same private INI and staged extension_dir.
+# Avoid loading the user's installed extensions or changing system php.ini.
+export PHPRC="$WORK_DIR/php.ini"
+export PHP_INI_SCAN_DIR=""
+printf 'extension_dir="%s"\n' "$EXT_DIR" > "$PHPRC"
+# pcntl/posix may be shared modules (e.g. official PHP Docker images).
+# Load those runtime dependencies by absolute path from the original directory.
+for runtime_module in pcntl posix; do
+    if [ -f "$RUNTIME_EXT_DIR/$runtime_module.so" ]; then
+        printf 'extension="%s/%s.so"\n' "$RUNTIME_EXT_DIR" "$runtime_module" >> "$PHPRC"
     fi
-fi
-pass "registry dir ready"
+done
+unset BEACON_GOVERNANCE_WORKER
+"$PHP_BIN" -r 'exit(function_exists("pcntl_async_signals") ? 0 : 1);' || fail "PHP CLI requires pcntl"
+mkdir -p "$REGISTRY_DIR"
 
-# registry_endpoint：默认路径走零配置模式，自定义路径用 file:// 前缀
-REGISTRY_ARGS=()
-if [ "$REGISTRY_DIR" != "/var/run/beacon" ]; then
-    REGISTRY_ARGS=(-d "beacon.registry_endpoint=file://$REGISTRY_DIR")
-fi
+# A normal PHP exit runs MSHUTDOWN: stop/reap the governance child and remove
+# the owned IPC segment. Sending SIGTERM to an unhandled sleep() skips this.
+cat > "$WORK_DIR/main.php" <<'PHP'
+<?php
+pcntl_async_signals(true);
+pcntl_signal(SIGTERM, function () { exit(0); });
+Beacon::ready();
+while (true) { usleep(100000); }
+PHP
 
-# ---- 3. 启动主进程（触发注册）----
-log "step 3: start main process (service=$SERVICE_NAME)"
+log "step 2: start parent PHP and real governance worker"
 "$PHP_BIN" -d extension=beacon.so -d beacon.enabled=1 \
-    -d beacon.service_name="$SERVICE_NAME" -d beacon.advertise_port=19001 \
-    ${REGISTRY_ARGS[@]+"${REGISTRY_ARGS[@]}"} \
-    -r 'sleep(30);' > "$LOG_FILE" 2>&1 &
+    -d "beacon.service_name=$SERVICE_NAME" -d beacon.advertise_host=127.0.0.1 \
+    -d beacon.advertise_port=19001 -d "beacon.governance_bin=$PHP_BIN" \
+    -d "beacon.governance_script=$DATA_DIR/governance.php" \
+    -d "beacon.registry_endpoint=file://$REGISTRY_DIR" \
+    -d "beacon.shm_key=$((1073741824 + $$))" \
+    "$WORK_DIR/main.php" > "$LOG_FILE" 2>&1 &
 MAIN_PID=$!
 
-# 等注册文件出现（最多 5s）
-for _ in 1 2 3 4 5; do
-    [ -f "$REG_FILE" ] && break
-    sleep 1
+# Read JSON rather than assuming formatting or accepting a partial write.
+registry_field() {
+    "$PHP_BIN" -r '
+        $data = json_decode(@file_get_contents($argv[1]), true);
+        foreach (explode(".", $argv[2]) as $key) { $data = $data[$key] ?? null; }
+        if ($data === null) exit(1);
+        echo is_bool($data) ? ($data ? "true" : "false") : $data;
+    ' "$REG_FILE" "$1"
+}
+for _ in {1..100}; do
+    if t1=$(registry_field registered_at 2>/dev/null) && \
+       [ "$(registry_field health.governance_alive 2>/dev/null || true)" = true ]; then break; fi
+    kill -0 "$MAIN_PID" 2>/dev/null || fail "parent exited before registration"
+    sleep 0.1
 done
-[ -f "$REG_FILE" ] || fail "register file not created"
-pass "registered: $REG_FILE"
+[ -n "${t1:-}" ] || fail "register file not created"
+[ "$(registry_field instance.port)" = 19001 ] || fail "advertise port mismatch"
+case "$(registry_field instance.id)" in "$SERVICE_NAME"-*) ;; *) fail "instance id mismatch" ;; esac
+[ "$(registry_field health.governance_alive)" = true ] || fail "governance heartbeat missing"
+pass "registered with valid instance and health"
 
-# ---- 4. 查看注册信息 ----
-log "step 4: inspect registry content"
-cat "$REG_FILE"
-grep -q "\"id\": \"${SERVICE_NAME}-" "$REG_FILE" || fail "instance id missing"
-grep -q '"port": 19001' "$REG_FILE" || fail "advertise port mismatch"
-grep -q '"governance_alive": true' "$REG_FILE" || fail "governance_alive not true"
-t1=$(grep -o '"registered_at": [0-9]*' "$REG_FILE" | grep -o '[0-9]*')
-pass "registry content valid (registered_at=$t1)"
-
-# ---- 5. 睡眠后查看注册（keepalive 更新）----
-log "step 5: sleep 5s (> keepalive_interval 3s), check keepalive update"
-sleep 5
-t2=$(grep -o '"registered_at": [0-9]*' "$REG_FILE" | grep -o '[0-9]*')
-[ "$t2" -gt "$t1" ] || fail "keepalive did not update registered_at ($t1 -> $t2)"
-grep -q '"governance_alive": true' "$REG_FILE" || fail "governance_alive turned false (heartbeat lost)"
-pass "keepalive updated (registered_at=$t1 -> $t2), governance_alive still true"
-
-# ---- 6. 停止主进程（deregister 摘除注册）----
-log "step 6: stop main process, expect deregister"
-kill "$MAIN_PID" 2>/dev/null || true
-for _ in 1 2 3 4 5; do
-    [ ! -f "$REG_FILE" ] && break
-    sleep 1
+log "step 3: wait for keepalive timestamp to advance"
+for _ in {1..100}; do
+    t2=$(registry_field registered_at 2>/dev/null || echo 0)
+    [ "$t2" -gt "$t1" ] && break
+    sleep 0.1
 done
-[ ! -f "$REG_FILE" ] || fail "deregister did not remove $REG_FILE"
-wait "$MAIN_PID" 2>/dev/null || true
+[ "$t2" -gt "$t1" ] || fail "keepalive did not advance ($t1 -> $t2)"
+[ "$(registry_field health.governance_alive)" = true ] || fail "governance heartbeat lost"
+pass "keepalive updated ($t1 -> $t2)"
+
+log "step 4: gracefully stop parent, verify deregistration"
+kill "$MAIN_PID"
+wait "$MAIN_PID" || fail "parent shutdown failed"
 MAIN_PID=""
-pass "deregistered: registry file removed"
+[ ! -f "$REG_FILE" ] || fail "deregister did not remove registry file"
+pass "governance worker deregistered"
 
-# ---- 7. 卸载扩展 ----
-log "step 7: uninstall extension"
-EXT_DIR=$("$PHP_BIN" -r 'echo ini_get("extension_dir");')
-DATA_DIR="$("$PHP_CONFIG" --prefix)/share/php/beacon"
+log "step 5: uninstall only the staged artifacts"
 rm -f "$EXT_DIR/beacon.so"
 rm -rf "$DATA_DIR"
-[ ! -f "$EXT_DIR/beacon.so" ] || fail "beacon.so not removed"
-[ ! -d "$DATA_DIR" ] || fail "data dir not removed"
-pass "extension uninstalled (beacon.so + $DATA_DIR removed)"
-
+[ ! -f "$EXT_DIR/beacon.so" ] || fail "staged extension not removed"
+[ ! -d "$DATA_DIR" ] || fail "staged data directory not removed"
+pass "staged extension and script uninstalled"
 log "ALL PASS"

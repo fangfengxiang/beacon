@@ -30,6 +30,7 @@ jobs:
         with:
           php-version: ${{ matrix.php }}
           coverage: none
+          extensions: pcntl, posix
 
       - name: Install dependencies
         run: |

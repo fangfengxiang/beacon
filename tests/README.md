@@ -44,3 +44,5 @@ bash tests/e2e/registry-lifecycle.sh
 E2E 在 `mktemp -d .../beacon-e2e.XXXXXX` 创建的私有目录中安装扩展与 governance.php，使用临时 INI，让父子 PHP 都加载该目录的扩展；无需 sudo，也不改动系统扩展。支持内置或共享形式的 pcntl/posix。父进程捕获 SIGTERM 并正常退出，触发 MSHUTDOWN 停止子进程、注销注册和清理 IPC。验收注册 JSON、心跳、保活时间递增、注销文件删除与临时安装产物卸载。
 
 本轮 CI 失败定位：PHP 8.0–8.5 的构建和 PHPT 已通过，E2E 因 BSD 风格 `mktemp -t beacon-e2e` 在 GNU mktemp 下报 `too few X's`。修复后的 E2E 已在 macOS PHP 8.5.11 和 Linux PHP 8.2 容器完整通过。这里验收的是 CLI 父进程 fork/exec 生命周期；FPM master/reload 仍需独立验收。
+
+远程确认：[run 38282414343](https://github.com/fangfengxiang/beacon/actions/runs/38282414343) 的 PHP 8.0–8.5 六个任务全部成功，包含 Build、22 个 PHPT 和完整 E2E。

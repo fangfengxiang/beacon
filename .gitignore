@@ -47,5 +47,12 @@ tests/*.log
 .vscode/
 .claude/
 .codebuddy/
-openspec/
+openspec/*
+!openspec/changes/
+openspec/changes/*
+!openspec/changes/harden-public-api-phpt/
 superpowers/
+# phpize/libtool generated files
+.libs/
+config.h.in
+config.nice

@@ -58,6 +58,9 @@ ZEND_BEGIN_MODULE_GLOBALS(beacon)
     char       *log_file;              /* beacon.log_file */
     char       *log_level;             /* beacon.log_level */
 
+    zval        callbacks[6];         /* request-owned callback slots */
+    zend_bool   shm_staged;           /* single governance writer has pending updates */
+
     /* 运行时状态 */
     int         shm_id;                /* sysv shm shmid，-1 = 未初始化 */
     beacon_shm_t *shm;                 /* shmat 返回的指针，NULL = 不可用 */
@@ -199,8 +202,8 @@ void  beacon_governance_shutdown(void);
 
 /* beacon_callback.c — C→PHP 回调调用
  *
- * init: 初始化回调存储（MINIT 调用）
- * cleanup: 清理回调存储（MSHUTDOWN 调用）
+ * init: 初始化请求回调存储（RINIT 调用）
+ * cleanup: 清理请求回调存储（RSHUTDOWN 调用）
  * set: 存储回调 zval（Phase 4 Beacon::setOpt 调用）
  * get: 获取回调 zval（按 type）
  * invoke: zend_call_function + zend_try + timing + warn

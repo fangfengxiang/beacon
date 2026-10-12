@@ -145,13 +145,12 @@ static const beacon_node_t *lb_weighted(beacon_candidate_set_t *cands)
     uint32_t total_weight = 0;
     for (uint32_t i = 0; i < cands->count; i++) {
         uint16_t w = cands->nodes[i]->weight;
-        if (w == 0) w = 1;  /* weight=0 视为 1，避免被忽略 */
         total_weight += w;
     }
 
     if (total_weight == 0) {
-        /* 所有节点 weight=0，退化为 random */
-        return lb_random(cands);
+        /* No node accepts weighted traffic. */
+        return NULL;
     }
 
     /* 加权随机：随机数 r ∈ [0, total_weight)，遍历累加权重直到 > r */
@@ -159,7 +158,6 @@ static const beacon_node_t *lb_weighted(beacon_candidate_set_t *cands)
     uint32_t cumulative = 0;
     for (uint32_t i = 0; i < cands->count; i++) {
         uint16_t w = cands->nodes[i]->weight;
-        if (w == 0) w = 1;
         cumulative += w;
         if (r < cumulative) {
             return cands->nodes[i];

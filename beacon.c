@@ -93,9 +93,6 @@ PHP_MINIT_FUNCTION(beacon)
             beacon_log(BEACON_LOG_INFO, "beacon extension initialized, shm ready");
         }
 
-        /* 初始化回调存储 */
-        beacon_callback_init();
-
         /* spawn 治理 worker（仅 FPM master，非治理 worker 自身）
          *
          * 环境变量 guard：子进程 MINIT 检查 BEACON_GOVERNANCE_WORKER=1，
@@ -128,9 +125,6 @@ PHP_MSHUTDOWN_FUNCTION(beacon)
             beacon_governance_shutdown();
         }
 
-        /* 清理回调存储 */
-        beacon_callback_cleanup();
-
         beacon_shm_destroy();
     }
 
@@ -148,6 +142,8 @@ PHP_MSHUTDOWN_FUNCTION(beacon)
  */
 PHP_RINIT_FUNCTION(beacon)
 {
+    beacon_callback_init();
+    BEACON_G(runtime_lb_strategy) = 0;
     if (!BEACON_G(enabled) || BEACON_G(shm) == NULL) {
         return SUCCESS;
     }
@@ -176,6 +172,7 @@ PHP_RINIT_FUNCTION(beacon)
  */
 PHP_RSHUTDOWN_FUNCTION(beacon)
 {
+    beacon_callback_cleanup();
     if (!BEACON_G(enabled) || BEACON_G(shm) == NULL) {
         return SUCCESS;
     }

@@ -42,24 +42,28 @@
  * Phase 4 Beacon::setOpt(OPT_ON_*, $callback) 调用 beacon_callback_set() 写入。
  * 治理 worker 调用 beacon_callback_invoke() 读取并执行。
  *
- * 使用静态数组而非 HashTable——回调类型是有限集（5 种），数组 O(1) 访问。
+ * 使用请求局部模块全局数组而非 HashTable——回调类型是有限集（5 种），数组 O(1) 访问。
  * 对标 PHP user_shutdown_function_list（静态数组）。
  */
-static zval callback_storage[BEACON_CB_MAX];
+#define callback_storage BEACON_G(callbacks)
 
-/* 初始化回调存储（MINIT 调用） */
+/* 初始化回调存储（RINIT 调用） */
 void beacon_callback_init(void)
 {
-    memset(callback_storage, 0, sizeof(callback_storage));
+    for (int i = 0; i < BEACON_CB_MAX; i++) {
+        ZVAL_UNDEF(&callback_storage[i]);
+    }
 }
 
-/* 清理回调存储（MSHUTDOWN 调用） */
+/* 清理回调存储（RSHUTDOWN 调用） */
 void beacon_callback_cleanup(void)
 {
     for (int i = 0; i < BEACON_CB_MAX; i++) {
         if (Z_TYPE(callback_storage[i]) != IS_UNDEF) {
-            zval_ptr_dtor(&callback_storage[i]);
+            zval previous;
+            ZVAL_COPY_VALUE(&previous, &callback_storage[i]);
             ZVAL_UNDEF(&callback_storage[i]);
+            zval_ptr_dtor(&previous);
         }
     }
 }
@@ -75,7 +79,7 @@ void beacon_callback_cleanup(void)
  */
 int beacon_callback_set(beacon_callback_type_t type, zval *callback)
 {
-    if (type < 0 || type >= BEACON_CB_MAX) {
+    if (type < BEACON_CB_ON_REGISTER || type >= BEACON_CB_MAX) {
         return -1;
     }
 
@@ -83,8 +87,10 @@ int beacon_callback_set(beacon_callback_type_t type, zval *callback)
     if (!callback || Z_TYPE_P(callback) == IS_NULL) {
         /* NULL 表示清除回调 */
         if (Z_TYPE(callback_storage[type]) != IS_UNDEF) {
-            zval_ptr_dtor(&callback_storage[type]);
+            zval previous;
+            ZVAL_COPY_VALUE(&previous, &callback_storage[type]);
             ZVAL_UNDEF(&callback_storage[type]);
+            zval_ptr_dtor(&previous);
         }
         return 0;
     }
@@ -104,13 +110,13 @@ int beacon_callback_set(beacon_callback_type_t type, zval *callback)
         efree(error_str);
     }
 
-    /* 释放旧回调 */
-    if (Z_TYPE(callback_storage[type]) != IS_UNDEF) {
-        zval_ptr_dtor(&callback_storage[type]);
-    }
-
-    /* 存储新回调（复制 zval，增加引用计数） */
-    ZVAL_COPY(&callback_storage[type], callback);
+    /* Install the new reference before releasing the old one: destructors
+     * may re-enter setOpt, and callback may alias the current slot. */
+    zval replacement, previous;
+    ZVAL_COPY(&replacement, callback);
+    ZVAL_COPY_VALUE(&previous, &callback_storage[type]);
+    ZVAL_COPY_VALUE(&callback_storage[type], &replacement);
+    if (!Z_ISUNDEF(previous)) zval_ptr_dtor(&previous);
 
     return 0;
 }
@@ -121,7 +127,7 @@ int beacon_callback_set(beacon_callback_type_t type, zval *callback)
  */
 zval *beacon_callback_get(beacon_callback_type_t type)
 {
-    if (type < 0 || type >= BEACON_CB_MAX) {
+    if (type < BEACON_CB_ON_REGISTER || type >= BEACON_CB_MAX) {
         return NULL;
     }
 
@@ -161,6 +167,10 @@ int beacon_callback_invoke(beacon_callback_type_t type, zval *ctx, zval *retval)
         return -1;
     }
 
+    zval held_callback;
+    ZVAL_COPY(&held_callback, callback);
+    callback = &held_callback;
+
     /* 计时开始 */
     struct timespec ts_start, ts_end;
     clock_gettime(CLOCK_MONOTONIC, &ts_start);
@@ -186,6 +196,7 @@ int beacon_callback_invoke(beacon_callback_type_t type, zval *ctx, zval *retval)
             beacon_log(BEACON_LOG_WARN, "callback invoke: not callable: %s", error_str);
             efree(error_str);
         }
+        zval_ptr_dtor(&held_callback);
         return -1;
     }
     if (error_str) {
@@ -239,6 +250,7 @@ int beacon_callback_invoke(beacon_callback_type_t type, zval *ctx, zval *retval)
         if (success && Z_TYPE(ret_val) != IS_UNDEF) {
             ZVAL_COPY_VALUE(retval, &ret_val);
         } else {
+            if (!Z_ISUNDEF(ret_val)) zval_ptr_dtor(&ret_val);
             ZVAL_NULL(retval);
         }
     } else {
@@ -253,5 +265,6 @@ int beacon_callback_invoke(beacon_callback_type_t type, zval *ctx, zval *retval)
         /* params[0] 是 ctx 的 copy，不需要单独释放 */
     }
 
+    zval_ptr_dtor(&held_callback);
     return success ? 0 : -1;
 }

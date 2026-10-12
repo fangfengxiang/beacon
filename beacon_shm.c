@@ -105,6 +105,7 @@ static key_t beacon_shm_generate_key(void)
 /* ---- shm 初始化（MINIT 调用）---- */
 int beacon_shm_init(void)
 {
+    BEACON_G(shm_staged) = 0;
     key_t key = beacon_shm_generate_key();
     size_t shm_size = sizeof(beacon_shm_t);
 
@@ -127,6 +128,10 @@ int beacon_shm_init(void)
     void *addr = shmat(shmid, NULL, 0);
     if (addr == (void *)-1) {
         beacon_log(BEACON_LOG_ERROR, "shmat failed (shmid=%d): %s", shmid, strerror(errno));
+        if (BEACON_G(is_shm_owner)) {
+            shmctl(shmid, IPC_RMID, NULL);
+            BEACON_G(is_shm_owner) = 0;
+        }
         return -1;
     }
 
@@ -170,6 +175,7 @@ int beacon_shm_init(void)
 /* ---- shm 销毁（MSHUTDOWN 调用）---- */
 void beacon_shm_destroy(void)
 {
+    BEACON_G(shm_staged) = 0;
     if (BEACON_G(shm) != NULL) {
         shmdt(BEACON_G(shm));
         BEACON_G(shm) = NULL;
@@ -259,11 +265,19 @@ int beacon_shm_worker_release(pid_t pid)
 int beacon_shm_store_nodes(const char *service, const beacon_node_t *nodes, uint32_t count)
 {
     beacon_shm_t *shm = BEACON_G(shm);
-    if (!shm || !service) return -1;
+    if (!shm || !service || !service[0] || strlen(service) >= BEACON_MAX_SVC_NAME_LEN) return -1;
 
     /* 选非激活 buffer */
     uint8_t inactive = (uint8_t)(1 - atomic_load(&shm->header.active));
     beacon_service_t *buf = (inactive == 0) ? shm->buffer_a : shm->buffer_b;
+
+    /* Start each batch from the committed snapshot. Only the governance writer
+     * may stage/commit; multiple stores in one batch share the same buffer. */
+    if (!BEACON_G(shm_staged)) {
+        beacon_service_t *active = (inactive == 0) ? shm->buffer_b : shm->buffer_a;
+        memcpy(buf, active, sizeof(shm->buffer_a));
+        BEACON_G(shm_staged) = 1;
+    }
 
     /* 找到对应 service slot（按 name 匹配，空 slot 兜底） */
     beacon_service_t *target = NULL;
@@ -315,6 +329,8 @@ int beacon_shm_commit(void)
     beacon_shm_t *shm = BEACON_G(shm);
     if (!shm) return -1;
 
+    if (!BEACON_G(shm_staged)) return 0;
+
     /* 更新 last_update 时间戳 */
     shm->header.last_update = (uint64_t)time(NULL);
 
@@ -329,6 +345,7 @@ int beacon_shm_commit(void)
 
     /* 原子切 active */
     atomic_store(&shm->header.active, inactive);
+    BEACON_G(shm_staged) = 0;
 
     /* 再一次屏障：确保 active 切换对读者可见 */
     __sync_synchronize();
@@ -336,41 +353,21 @@ int beacon_shm_commit(void)
     return 0;
 }
 
-/* ---- FPM worker 读服务节点表（读激活 buffer，CRC 校验失败回退备份）---- */
+/* Read only the committed snapshot. Empty services are authoritative;
+ * the inactive buffer may contain uncommitted data and is never a fallback. */
 const beacon_service_t *beacon_shm_read_service(const char *service)
 {
     beacon_shm_t *shm = BEACON_G(shm);
-    if (!shm || !service) return NULL;
+    if (!shm || !service || !service[0] || strlen(service) >= BEACON_MAX_SVC_NAME_LEN) return NULL;
 
     uint8_t active = (uint8_t)atomic_load(&shm->header.active);
-    beacon_service_t *primary = (active == 0) ? shm->buffer_a : shm->buffer_b;
-    beacon_service_t *backup  = (active == 0) ? shm->buffer_b : shm->buffer_a;
-
-    /* 在 primary 中查找 */
+    beacon_service_t *buf = (active == 0) ? shm->buffer_a : shm->buffer_b;
     for (int i = 0; i < BEACON_MAX_SERVICES; i++) {
-        if (primary[i].name[0] == '\0') continue;
-        if (strncmp(primary[i].name, service, BEACON_MAX_SVC_NAME_LEN - 1) == 0) {
-            if (primary[i].node_count > 0 && primary[i].version > 0) {
-                return &primary[i];
-            }
-            break;
+        if (strncmp(buf[i].name, service, BEACON_MAX_SVC_NAME_LEN) == 0) {
+            if (buf[i].writing || buf[i].node_count > BEACON_MAX_NODES_PER_SVC) return NULL;
+            return &buf[i];
         }
     }
-
-    /* primary 损坏/空，读备份 buffer（双缓冲互救） */
-    beacon_log(BEACON_LOG_WARN, "primary buffer for %s empty/corrupted, trying backup", service);
-    for (int i = 0; i < BEACON_MAX_SERVICES; i++) {
-        if (backup[i].name[0] == '\0') continue;
-        if (strncmp(backup[i].name, service, BEACON_MAX_SVC_NAME_LEN - 1) == 0) {
-            if (backup[i].node_count > 0 && backup[i].version > 0) {
-                beacon_log(BEACON_LOG_INFO, "recovered %s from backup buffer", service);
-                return &backup[i];
-            }
-            break;
-        }
-    }
-
-    beacon_log(BEACON_LOG_ERROR, "both buffers corrupted for %s, no data", service);
     return NULL;
 }
 

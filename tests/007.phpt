@@ -12,6 +12,8 @@ if (!function_exists("beacon_test_pick")) {
 --INI--
 beacon.enabled=1
 beacon.shm_key=0x71080007
+--ENV--
+BEACON_GOVERNANCE_WORKER=1
 --FILE--
 <?php
 require __DIR__ . "/beacon.inc";

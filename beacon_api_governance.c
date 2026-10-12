@@ -31,7 +31,7 @@ static uint8_t string_to_node_status(const char *str)
     if (strcmp(str, "degraded") == 0)   return BEACON_NODE_STATUS_DEGRADED;
     if (strcmp(str, "dead") == 0)       return BEACON_NODE_STATUS_DEAD;
     if (strcmp(str, "not_ready") == 0)  return BEACON_NODE_STATUS_NOT_READY;
-    return BEACON_NODE_STATUS_OK; /* 未知字符串默认 OK */
+    return UINT8_MAX; /* Unknown states must not receive traffic. */
 }
 
 /* 健康状态数值 → 字符串（calcHealth 用，C 层返回数值，PHP userland 需字符串） */
@@ -83,6 +83,12 @@ PHP_METHOD(Beacon_Governance, storeNodes)
         RETURN_FALSE;
     }
 
+    if (service_len == 0 || service_len >= BEACON_MAX_SVC_NAME_LEN ||
+        memchr(service, '\0', service_len)) {
+        php_error_docref(NULL, E_WARNING, "service must contain 1-63 bytes without NUL");
+        RETURN_FALSE;
+    }
+
     beacon_shm_t *shm = BEACON_G(shm);
     if (!shm) {
         php_error_docref(NULL, E_WARNING, "shm unavailable, extension in degraded mode");
@@ -104,7 +110,23 @@ PHP_METHOD(Beacon_Governance, storeNodes)
     zval *entry;
     ZEND_HASH_FOREACH_VAL(Z_ARRVAL_P(nodes_arr), entry) {
         if (i >= count) break;
-        if (Z_TYPE_P(entry) != IS_ARRAY) continue;
+        ZVAL_DEREF(entry);
+        if (Z_TYPE_P(entry) != IS_ARRAY) {
+            php_error_docref(NULL, E_WARNING, "node must be an array, node skipped");
+            continue;
+        }
+        memset(&nodes[i], 0, sizeof(nodes[i]));
+        zval *required_id = zend_hash_str_find(Z_ARRVAL_P(entry), "id", 2);
+        zval *required_host = zend_hash_str_find(Z_ARRVAL_P(entry), "host", 4);
+        zval *required_port = zend_hash_str_find(Z_ARRVAL_P(entry), "port", 4);
+        if (!required_id || Z_TYPE_P(required_id) != IS_STRING || Z_STRLEN_P(required_id) == 0 ||
+            Z_STRLEN_P(required_id) >= BEACON_MAX_NODE_ID_LEN || memchr(Z_STRVAL_P(required_id), '\0', Z_STRLEN_P(required_id)) ||
+            !required_host || Z_TYPE_P(required_host) != IS_STRING || Z_STRLEN_P(required_host) == 0 ||
+            Z_STRLEN_P(required_host) >= BEACON_MAX_HOST_LEN || memchr(Z_STRVAL_P(required_host), '\0', Z_STRLEN_P(required_host)) ||
+            !required_port || Z_TYPE_P(required_port) != IS_LONG || Z_LVAL_P(required_port) < 1 || Z_LVAL_P(required_port) > 65535) {
+            php_error_docref(NULL, E_WARNING, "node requires valid id, host and port (1-65535), node skipped");
+            continue;
+        }
 
         /* id (string) */
         zval *zid = zend_hash_str_find(Z_ARRVAL_P(entry), "id", sizeof("id") - 1);
@@ -133,21 +155,26 @@ PHP_METHOD(Beacon_Governance, storeNodes)
         /* status (string → numeric) */
         zval *zstatus = zend_hash_str_find(Z_ARRVAL_P(entry), "status", sizeof("status") - 1);
         if (zstatus && Z_TYPE_P(zstatus) == IS_STRING) {
-            nodes[i].status = string_to_node_status(Z_STRVAL_P(zstatus));
-        } else if (zstatus && Z_TYPE_P(zstatus) == IS_LONG) {
+            nodes[i].status = memchr(Z_STRVAL_P(zstatus), '\0', Z_STRLEN_P(zstatus))
+                ? UINT8_MAX : string_to_node_status(Z_STRVAL_P(zstatus));
+        } else if (zstatus && Z_TYPE_P(zstatus) == IS_LONG && Z_LVAL_P(zstatus) >= 0 && Z_LVAL_P(zstatus) <= BEACON_NODE_STATUS_NOT_READY) {
             /* 兼容整数 status（内部测试用） */
             nodes[i].status = (uint8_t)Z_LVAL_P(zstatus);
         } else {
-            nodes[i].status = BEACON_NODE_STATUS_OK; /* 默认 OK */
+            nodes[i].status = zstatus ? UINT8_MAX : BEACON_NODE_STATUS_OK;
+        }
+        if (nodes[i].status > BEACON_NODE_STATUS_NOT_READY) {
+            php_error_docref(NULL, E_WARNING, "invalid node status, node skipped");
+            continue;
         }
 
         /* weight (int, 默认 1，必须 >= 0) */
         zval *zweight = zend_hash_str_find(Z_ARRVAL_P(entry), "weight", sizeof("weight") - 1);
-        if (zweight && Z_TYPE_P(zweight) == IS_LONG && Z_LVAL_P(zweight) >= 0) {
-            nodes[i].weight = (uint16_t)Z_LVAL_P(zweight);
-        } else {
-            nodes[i].weight = 1; /* 默认权重 1 */
+        if (zweight && (Z_TYPE_P(zweight) != IS_LONG || Z_LVAL_P(zweight) < 0 || Z_LVAL_P(zweight) > UINT16_MAX)) {
+            php_error_docref(NULL, E_WARNING, "node weight must be an int in 0-65535, node skipped");
+            continue;
         }
+        nodes[i].weight = zweight ? (uint16_t)Z_LVAL_P(zweight) : 1;
 
         /* methods (string, 可选) */
         zval *zmethods = zend_hash_str_find(Z_ARRVAL_P(entry), "methods", sizeof("methods") - 1);

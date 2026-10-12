@@ -24,11 +24,11 @@ if (is_array($h)) {
     echo "has_governance_alive: " . (array_key_exists("governance_alive", $h) ? "yes" : "no") . "\n";
 }
 ?>
---EXPECTF--
-is_array: %s
-has_status: %s
-has_pool_busy: %s
-has_pool_idle: %s
-has_pool_total: %s
-has_saturation: %s
-has_governance_alive: %s
+--EXPECT--
+is_array: yes
+has_status: yes
+has_pool_busy: yes
+has_pool_idle: yes
+has_pool_total: yes
+has_saturation: yes
+has_governance_alive: yes

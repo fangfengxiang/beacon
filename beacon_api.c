@@ -166,6 +166,12 @@ PHP_METHOD(Beacon, pick)
         RETURN_NULL();
     }
 
+    if (service_len == 0 || service_len >= BEACON_MAX_SVC_NAME_LEN ||
+        memchr(service, '\0', service_len)) {
+        php_error_docref(NULL, E_WARNING, "service must contain 1-63 bytes without NUL");
+        RETURN_NULL();
+    }
+
     beacon_shm_t *shm = BEACON_G(shm);
     if (!shm) {
         php_error_docref(NULL, E_WARNING, "shm unavailable, extension in degraded mode");
@@ -230,6 +236,12 @@ PHP_METHOD(Beacon, getInstances)
     size_t service_len;
 
     if (zend_parse_parameters(ZEND_NUM_ARGS(), "s", &service, &service_len) == FAILURE) {
+        RETURN_EMPTY_ARRAY();
+    }
+
+    if (service_len == 0 || service_len >= BEACON_MAX_SVC_NAME_LEN ||
+        memchr(service, '\0', service_len)) {
+        php_error_docref(NULL, E_WARNING, "service must contain 1-63 bytes without NUL");
         RETURN_EMPTY_ARRAY();
     }
 
@@ -366,6 +378,10 @@ PHP_METHOD(Beacon, setOpt)
             if (Z_TYPE_P(value) != IS_LONG) {
                 php_error_docref(NULL, E_WARNING, "OPT_LB_STRATEGY expects int, got %s",
                                 zend_get_type_by_const(Z_TYPE_P(value)));
+                RETURN_FALSE;
+            }
+            if (Z_LVAL_P(value) < BEACON_LB_ROUND_ROBIN || Z_LVAL_P(value) > BEACON_LB_WEIGHTED) {
+                php_error_docref(NULL, E_WARNING, "OPT_LB_STRATEGY expects a Beacon::LB_* value");
                 RETURN_FALSE;
             }
             BEACON_G(runtime_lb_strategy) = (int)Z_LVAL_P(value);

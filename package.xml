@@ -59,6 +59,22 @@
     <file name="008.phpt" role="test" />
     <file name="009.phpt" role="test" />
     <file name="010.phpt" role="test" />
+    <file name="public_callback.phpt" role="test" />
+    <file name="public_capacity.phpt" role="test" />
+    <file name="public_disabled.phpt" role="test" />
+    <file name="public_health.phpt" role="test" />
+    <file name="public_metadata.phpt" role="test" />
+    <file name="public_node_validation.phpt" role="test" />
+    <file name="public_options.phpt" role="test" />
+    <file name="public_request_lifetime.phpt" role="test" />
+    <file name="public_selection.phpt" role="test" />
+    <file name="public_service_names.phpt" role="test" />
+    <file name="public_snapshot.phpt" role="test" />
+    <file name="public_weighted.phpt" role="test" />
+    <file name="README.md" role="test" />
+    <dir name="fixtures">
+     <file name="request_router.inc" role="test" />
+    </dir>
     <dir name="e2e">
      <file name="registry-lifecycle.sh" role="test" />
     </dir>
